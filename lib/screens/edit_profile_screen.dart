@@ -1,20 +1,75 @@
 import 'package:flutter/material.dart';
 import 'package:social_app/routes/app_routes.dart';
+import 'package:social_app/services/user_service.dart';
+
 
 class EditProfileScreen extends StatefulWidget {
-  const EditProfileScreen({Key? key});
+  const EditProfileScreen({super.key});
 
   @override
-  _EditProfileScreenState createState() => _EditProfileScreenState();
+  EditProfileScreenState createState() => EditProfileScreenState();
 }
 
-class _EditProfileScreenState extends State<EditProfileScreen> {
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _loginController = TextEditingController();
-  final TextEditingController _passwordController = TextEditingController();
-  final TextEditingController _confirmPasswordController = TextEditingController();
+class EditProfileScreenState extends State<EditProfileScreen> {
+  final _userService = UserService();
+
+  final _nameController = TextEditingController();
+  final _loginController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
+  bool _isLoading = false;
   bool _obscurePassword = true;
   final bool _obscureConfirmPassword = true;
+
+  void _editProfile() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    final data = {
+      if (_nameController.text.isNotEmpty) 'name': _nameController.text,
+      if (_loginController.text.isNotEmpty) 'login': _loginController.text,
+      if (_passwordController.text.isNotEmpty) 'password': _passwordController.text,
+      if (_confirmPasswordController.text.isNotEmpty) 'confirm_password': _confirmPasswordController.text,
+    };
+
+    final result = await _userService.editUser(
+      data : data
+    );
+    
+    if (!mounted) return;
+
+    if (result['success']) {
+      // Mostrar mensagem de sucesso
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result['message']),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      // Espera um tempo antes de redirecionar
+      await Future.delayed(const Duration(seconds: 1));
+      
+      if (!mounted) return;
+
+      // Navegar para tela inicial
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        AppRoutes.login,
+        (route) => false, // Remove todas as anteriores
+      );
+    } else {
+      // Mostrar mensagem de erro
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result['message'])),
+      );
+    }
+
+    setState(() {
+      _isLoading = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,15 +88,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   radius: 50,
                   child: Icon(Icons.person),
                 ),
-                // CircleAvatar(
-                //   radius: 15,
-                //   backgroundColor: Colors.green,
-                //   child: Icon(
-                //     Icons.camera_alt,
-                //     size: 15,
-                //     color: Colors.white,
-                //   ),
-                // ),
               ],
             ),
             const SizedBox(height: 20),
@@ -138,16 +184,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 if (value == null || value.isEmpty) {
                   return 'Por favor, insira sua senha';
                 }
+                if (value != _passwordController.text) {
+                  return 'As senhas não coincidem';
+                }
                 return null;
               },
             ),
             const SizedBox(height: 30),
 
-
-            ElevatedButton(
-              onPressed: () => {
-                Navigator.pushNamed(context, AppRoutes.login)
-              },
+            _isLoading
+                ? Center(child: CircularProgressIndicator())
+                : ElevatedButton(
+              onPressed: _editProfile,
               style: ElevatedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 50),
               ),

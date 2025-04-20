@@ -1,38 +1,59 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:social_app/services/auth_service.dart';
+import 'package:social_app/services/post_service.dart';
+import 'package:social_app/widgets/post_card.dart';
 import '../models/post.dart';
-import '../routes/app_routes.dart';
-import '../widgets/bottom_navigation.dart';
 import '../models/user.dart';
+import '../widgets/bottom_navigation.dart';
 
 class TimelineScreen extends StatefulWidget {
   const TimelineScreen({super.key});
 
   @override
-  _TimelineScreenState createState() => _TimelineScreenState();
+  State<TimelineScreen> createState() => _TimelineScreenState();
 }
 
 class _TimelineScreenState extends State<TimelineScreen> {
-  final User user = User.getUserByUsername('João Silva');
+  final _postService = PostService();
+  final _authService = AuthService();
+  final _scrollController = ScrollController();
+  final _searchController = TextEditingController();
+
   final List<Post> _posts = [];
-  late List<Post> _filteredPosts = [];
-  
-  final ScrollController _scrollController = ScrollController();
-  final TextEditingController _searchController = TextEditingController();
-  
-  static const int _postsPerPage = 5;
+  List<Post> _filteredPosts = [];
+
+  User? _currentUser;
   int _currentPage = 0;
   bool _isLoading = false;
+  bool _isSearching = false;
   bool _hasMore = true;
+  String _lastSearchQuery = '';
+  Timer? _debounce;
 
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_scrollListener);
-    _searchController.addListener(_onSearchChanged);
-    _loadMorePosts();
+    _initialize();
   }
 
-  void _scrollListener() {
+  Future<void> _initialize() async {
+    await _loadCurrentUser();
+    _scrollController.addListener(_onScroll);
+    _searchController.addListener(_onSearchChanged);
+    await _loadMorePosts();
+  }
+
+  Future<void> _loadCurrentUser() async {
+    try {
+      final user = await _authService.loadCurrentUser();
+      setState(() => _currentUser = user);
+    } catch (e) {
+      _showError('Erro ao carregar usuário');
+    }
+  }
+
+  void _onScroll() {
     if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent * 0.9) {
       _loadMorePosts();
     }
@@ -41,42 +62,67 @@ class _TimelineScreenState extends State<TimelineScreen> {
   Future<void> _loadMorePosts() async {
     if (_isLoading || !_hasMore) return;
 
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() => _isLoading = true);
+    try {
+      final newPosts = await _postService.fetchPosts(page: _currentPage);
+      await _markUserLikes(newPosts);
 
-    // Simular delay de rede
-    await Future.delayed(const Duration(seconds: 1));
-
-    // Obter posts da API/banco de dados
-    final newPosts = Post.getPosts().skip(_currentPage * _postsPerPage).take(_postsPerPage).toList();
-
-    setState(() {
-      if (newPosts.isEmpty) {
-        _hasMore = false;
-      } else {
-        _posts.addAll(newPosts);
-        _currentPage++;
-        _applySearch(); // Atualiza os posts filtrados
-      }
-      _isLoading = false;
-    });
+      setState(() {
+        if (newPosts.isEmpty) {
+          _hasMore = false;
+        } else {
+          _posts.addAll(newPosts);
+          _currentPage++;
+        }
+        _applySearch(_searchController.text.trim());
+      });
+    } catch (e) {
+      _showError('Erro ao carregar posts');
+    } finally {
+      setState(() => _isLoading = false);
+    }
   }
 
   void _onSearchChanged() {
-    _applySearch();
-  }
-
-  void _applySearch() {
-    setState(() {
-      _filteredPosts = _posts
-          .where((post) =>
-              post.content.toLowerCase().contains(_searchController.text.toLowerCase()))
-          .toList();
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () {
+      final query = _searchController.text.trim();
+      _applySearch(query);
     });
   }
 
-  Future<void> _refreshTimeline() async {
+  Future<void> _applySearch(String query) async {
+    final lowerQuery = query.toLowerCase();
+
+    if (lowerQuery.isEmpty) {
+      setState(() {
+        _filteredPosts = List.from(_posts);
+        _lastSearchQuery = '';
+        _isSearching = false;
+      });
+      return;
+    }
+
+    if (lowerQuery == _lastSearchQuery) return;
+
+    setState(() => _isSearching = true);
+
+    try {
+      final searchedPosts = await _postService.fetchPostsSearch(query: lowerQuery);
+      await _markUserLikes(searchedPosts);
+      setState(() {
+        _filteredPosts = searchedPosts;
+        _lastSearchQuery = lowerQuery;
+      });
+    } catch (e) {
+      _showError('Erro ao buscar posts');
+      setState(() => _filteredPosts = []);
+    } finally {
+      setState(() => _isSearching = false);
+    }
+  }
+
+  Future<void> _refresh() async {
     setState(() {
       _posts.clear();
       _filteredPosts.clear();
@@ -86,18 +132,101 @@ class _TimelineScreenState extends State<TimelineScreen> {
     await _loadMorePosts();
   }
 
+  void _handleDelete(Post post) {
+    if (_currentUser?.login != post.login) {
+      _showError('Você não pode excluir este post');
+      return;
+    }
+
+    try {
+      _postService.deletePost(post.id).then((_) {
+        _showSuccess('Post excluído com sucesso!');
+        setState(() {
+          _posts.removeWhere((p) => p.id == post.id);
+          _filteredPosts.removeWhere((p) => p.id == post.id);
+        });
+      }).catchError((error) {
+        _showError('Erro ao excluir post: $error');
+      });
+    } catch (e) {
+      _showError('Erro ao excluir post: $e');
+    }
+  }
+
+  Future<void> _handleLike(Post post) async {
+    final userLogin = _currentUser?.login;
+    if (userLogin == null) return;
+
+    try {
+      final hasLiked = await _postService.fetchLikes(post.id).then(
+            (likes) => likes.any((like) => like['user_login'] == userLogin),
+          );
+
+      if (hasLiked) {
+        await _postService.unlikePost(post.id);
+        setState(() {
+          post.isLiked = false;
+          post.likes--;
+        });
+      } else {
+        await _postService.likePost(post.id);
+        setState(() {
+          post.isLiked = true;
+          post.likes++;
+        });
+      }
+    } catch (e) {
+      _showError('Erro ao atualizar curtida');
+    }
+  }
+
+  Future<void> _markUserLikes(List<Post> posts) async {
+    final login = _currentUser?.login;
+    if (login == null) return;
+
+    for (var post in posts) {
+      try {
+        final likes = await _postService.fetchLikes(post.id);
+        post.isLiked = likes.any((like) => like['user_login'] == login);
+      } catch (e) {
+        post.isLiked = false;
+      }
+    }
+  }
+
+  void _showError(String message) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
+    );
+  }
+
+  void _showSuccess(String message) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.green),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_currentUser == null) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return BottomNavigation(
       currentIndex: 0,
+      login: _currentUser!.login,
       body: RefreshIndicator(
-        onRefresh: _refreshTimeline,
+        onRefresh: _refresh,
         child: CustomScrollView(
           controller: _scrollController,
           slivers: [
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
                 child: TextField(
                   controller: _searchController,
                   decoration: const InputDecoration(
@@ -107,31 +236,62 @@ class _TimelineScreenState extends State<TimelineScreen> {
                 ),
               ),
             ),
+            if (_isSearching && _posts.isNotEmpty)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.all(20),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            ),
             SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               sliver: SliverList(
                 delegate: SliverChildBuilderDelegate(
                   (context, index) {
-                    if (index < _filteredPosts.length) {
-                      return _buildPostCard(_filteredPosts[index]);
-                    } else if (_hasMore && _isLoading) {
+                    final list = _filteredPosts;
+
+                    if (list.isEmpty) {
+                      if (_isLoading && _posts.isEmpty) {
+                        return const Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Center(child: CircularProgressIndicator()),
+                        );
+                      }
                       return const Padding(
-                        padding: EdgeInsets.all(16.0),
-                        child: Center(
-                          child: CircularProgressIndicator(),
-                        ),
-                      );
-                    } else if (!_hasMore) {
-                      return const Padding(
-                        padding: EdgeInsets.all(16.0),
-                        child: Center(
-                          child: Text('Não há mais posts para carregar'),
-                        ),
+                        padding: EdgeInsets.all(16),
+                        child: Center(child: Text('Nenhum post encontrado')),
                       );
                     }
+
+                    if (index < list.length) {
+                      final post = list[index];
+                      return PostCard(
+                        post: post,
+                        currentUser: _currentUser,
+                        onDelete: _handleDelete,
+                        onLike: () => _handleLike(post),
+                      );
+                    }
+
+                    if (_hasMore && _isLoading) {
+                      return const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Center(child: CircularProgressIndicator()),
+                      );
+                    }
+
+                    if (!_hasMore) {
+                      return const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Center(child: Text('Não há mais posts')),
+                      );
+                    }
+
                     return null;
                   },
-                  childCount: _filteredPosts.length + (_hasMore || _isLoading ? 1 : 0),
+                  childCount: _filteredPosts.isEmpty
+                      ? 1
+                      : _filteredPosts.length + (_hasMore || _isLoading ? 1 : 0),
                 ),
               ),
             ),
@@ -141,168 +301,11 @@ class _TimelineScreenState extends State<TimelineScreen> {
     );
   }
 
-  Widget _buildPostCard(Post post) {
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(15),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ListTile(
-            title: GestureDetector(
-              onTap: () {
-                Navigator.pushNamed(
-                  context,
-                  AppRoutes.profile,
-                  arguments: User.getUserByUsername(post.username),
-                );
-              },
-              child: Text(
-                post.username,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-            ),
-            subtitle: Text(
-              _formatTimestamp(post.timestamp),
-              style: const TextStyle(color: Colors.grey),
-            ),
-            trailing: post.username == user.username
-                ? IconButton(
-                    icon: const Icon(Icons.delete),
-                    onPressed: () => _showProfileOptions(context, post),
-                  )
-                : null,
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Text(post.content),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    IconButton(
-                      icon: Icon(
-                        post.isLiked ? Icons.thumb_up : Icons.thumb_up_outlined,
-                        color: post.isLiked ? Colors.blue : Colors.black,
-                      ),
-                      onPressed: () {
-                        setState(() {
-                          if (post.isLiked) {
-                            post.likes--;
-                            post.isLiked = false;
-                          } else {
-                            post.likes++;
-                            post.isLiked = true;
-                          }
-                        });
-                      },
-                    ),
-                    Text('${post.likes} Curtidas'),
-                    Padding(padding: const EdgeInsets.symmetric(horizontal: 8)),
-                    IconButton(
-                      icon: Icon(
-                        post.isDesliked ? Icons.thumb_down : Icons.thumb_down_outlined,
-                        color: post.isDesliked ? Colors.red : Colors.black,
-                      ),
-                      onPressed: () {
-                        setState(() {
-                          if (post.isDesliked) {
-                            post.deslikes--;
-                            post.isDesliked = false;
-                          } else {
-                            post.deslikes++;
-                            post.isDesliked = true;
-                          }
-                        });
-                      },
-                    ),
-                    Text('${post.deslikes} Deslikes'),
-                  ],
-                ),
-                Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.comment_outlined),
-                      onPressed: () {
-                        Navigator.pushNamed(
-                          context,
-                          AppRoutes.comments,
-                          arguments: post,
-                        );
-                      },
-                    ),
-                    Text('${post.comments.length} Comentários'),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _formatTimestamp(DateTime timestamp) {
-    final now = DateTime.now();
-    final difference = now.difference(timestamp);
-
-    if (difference.inMinutes < 1) return 'Agora';
-    if (difference.inHours < 1) return '${difference.inMinutes}m';
-    if (difference.inDays < 1) return '${difference.inHours}h';
-    return '${difference.inDays}d';
-  }
-
-  void _showProfileOptions(BuildContext context, Post post) {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Text(
-              'Deseja excluir a publicação?',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          ListTile(
-            leading: const Icon(Icons.cancel),
-            title: const Text('Cancelar'),
-            onTap: () {
-              Navigator.pop(context);
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.delete),
-            title: const Text('Deletar'),
-            onTap: () {
-              setState(() {
-                _posts.remove(post);
-                _filteredPosts.remove(post);
-              });
-              Navigator.pop(context);
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   void dispose() {
-    _scrollController.removeListener(_scrollListener);
     _scrollController.dispose();
     _searchController.dispose();
+    _debounce?.cancel();
     super.dispose();
   }
 }

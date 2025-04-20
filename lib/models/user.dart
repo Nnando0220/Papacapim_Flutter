@@ -1,41 +1,16 @@
 class User {
-  final String username;
-  final int posts;
-  final int followers;
-  final int following;
-  final bool isCurrentUser;
+  final String login;
+  final String name;
 
   User({
-    required this.username,
-    required this.posts,
-    required this.followers,
-    required this.following,
-    required this.isCurrentUser,
+    required this.login,
+    required this.name,
   });
 
-  static final List<User> _usersProfile = [
-    User(
-      username: 'João Silva',
-      posts: 42,
-      followers: 1520,
-      following: 890,
-      isCurrentUser: true,
-    ),
-    User(
-      username: 'Maria Souza',
-      posts: 65,
-      followers: 2100,
-      following: 750,
-      isCurrentUser: false,
-    ),
-    // Add more mock users as needed
-  ];
-
-  static List<User> getUsers() {
-    return _usersProfile;
-  }
-
-  static User getUserByUsername(String username) {
-    return _usersProfile.firstWhere((user) => user.username == username);
+  factory User.fromJson(Map<String, dynamic> json) {
+    return User(
+      login: json['user_login'] ?? json['login'] ?? 'Usuário Desconhecido',
+      name: json['name'] ?? 'Nome Desconhecido',
+    );
   }
 }

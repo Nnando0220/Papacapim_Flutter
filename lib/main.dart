@@ -1,18 +1,20 @@
 // main.dart
 import 'package:flutter/material.dart';
-import 'package:social_app/routes/app_routes.dart';
+import 'package:social_app/models/post.dart';
 import 'package:social_app/screens/comment_screen.dart';
+import 'package:timeago/timeago.dart' as timeago;
+import 'package:social_app/routes/app_routes.dart';
 import 'package:social_app/screens/edit_profile_screen.dart';
 import 'package:social_app/screens/login_screen.dart';
 import 'package:social_app/screens/timeline_screen.dart';
 import 'package:social_app/screens/create_post_screen.dart';
-import 'package:social_app/models/post.dart';
-import 'package:social_app/models/user.dart';
 import 'package:social_app/screens/profile_screen.dart';
 import 'package:social_app/screens/signup_screen.dart';
 import 'package:social_app/screens/search_user_screen.dart';
 
+
 void main() {
+  timeago.setLocaleMessages('pt_BR', timeago.PtBrMessages());
   runApp(const SocialApp());
 }
 
@@ -36,16 +38,16 @@ class SocialApp extends StatelessWidget {
       initialRoute: AppRoutes.login,
       routes: {
         AppRoutes.signup: (ctx) => const SignUpScreen(),
-        AppRoutes.timeline: (ctx) => const TimelineScreen(),
         AppRoutes.login: (ctx) => const LoginScreen(),
-        AppRoutes.createPost: (ctx) => const CreatePostScreen(),
-        AppRoutes.editProfile: (ctx) => const EditProfileScreen(),
-        AppRoutes.searchUser: (ctx) => const SearchUserScreen(),
+        AppRoutes.timeline: (ctx) => const TimelineScreen(),
         AppRoutes.profile: (ctx) {
-          final user = ModalRoute.of(ctx)!.settings.arguments as User? ?? User.getUserByUsername('João Silva');
-          return ProfileScreen(user: user);
+          final login = ModalRoute.of(ctx)!.settings.arguments as String;
+          return ProfileScreen(login: login);
         },
-        AppRoutes.comments: (ctx) {
+        AppRoutes.createPost: (ctx) => const CreatePostScreen(),
+        AppRoutes.searchUser: (ctx) => const SearchUserScreen(),
+        AppRoutes.editProfileScreen: (ctx) => const EditProfileScreen(),
+        AppRoutes.commentScreen: (ctx) {
           final post = ModalRoute.of(ctx)!.settings.arguments as Post;
           return CommentsScreen(post: post);
         },

@@ -1,6 +1,6 @@
 class Comment {
-  final String id; // Identificador único do comentário
-  final String postId; // Referência ao post
+  final int id; 
+  final int postId; 
   final String username;
   final String content;
   final DateTime timestamp;
@@ -12,4 +12,14 @@ class Comment {
     required this.content,
     required this.timestamp,
   });
+
+  factory Comment.fromJson(Map<String, dynamic> json) {
+    return Comment(
+      id: json['id'] ?? '', 
+      postId: json['post_id'] ?? '', 
+      username: json['user_login'] ?? 'Usuário Desconhecido', 
+      content: json['message'] ?? '',
+      timestamp: DateTime.tryParse(json['created_at'] ?? '') ?? DateTime.now(), 
+    );
+  }
 }

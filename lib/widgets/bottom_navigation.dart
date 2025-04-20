@@ -1,18 +1,18 @@
 import 'package:flutter/material.dart';
-import 'package:social_app/models/user.dart';
 import '../routes/app_routes.dart';
-
 class BottomNavigation extends StatelessWidget {
   final PreferredSizeWidget? appBar;
   final Widget body;
   final int currentIndex;
+  final String login; 
 
   const BottomNavigation({
-    Key? key,
+    super.key,
     this.appBar,
     required this.body,
     required this.currentIndex,
-  }) : super(key: key);
+    required this.login, 
+  });
 
   void _onItemTapped(BuildContext context, int index) {
     String routeName;
@@ -31,9 +31,9 @@ class BottomNavigation extends StatelessWidget {
         Navigator.pushNamed(
           context,
           AppRoutes.profile,
-          arguments: User.getUserByUsername('João Silva'),
+          arguments: login,
         );
-        break;
+        return; 
       default:
         return;
     }
