@@ -16,6 +16,8 @@ class BottomNavigation extends StatelessWidget {
 
   void _onItemTapped(BuildContext context, int index) {
     String routeName;
+    dynamic arguments;
+    
     switch (index) {
       case 0:
         routeName = AppRoutes.timeline;
@@ -28,18 +30,24 @@ class BottomNavigation extends StatelessWidget {
         break;
       case 3:
         routeName = AppRoutes.profile;
-        Navigator.pushNamed(
-          context,
-          AppRoutes.profile,
-          arguments: login,
-        );
-        return; 
+        arguments = login;
+        break;
       default:
         return;
     }
 
     if (ModalRoute.of(context)?.settings.name != routeName) {
-      Navigator.pushNamed(context, routeName);
+      Navigator.pushNamed(
+        context,
+        routeName,
+        arguments: arguments,
+      );
+    } else {
+      Navigator.pushReplacementNamed(
+        context,
+        routeName,
+        arguments: arguments,
+      );
     }
   }
 

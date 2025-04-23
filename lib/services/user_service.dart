@@ -1,9 +1,26 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:social_app/models/user.dart';
 import 'package:social_app/routes/app_routes.dart';
 import 'package:social_app/services/auth_service.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+class NotFoundException implements Exception {
+  final String message;
+  NotFoundException(this.message);
+}
+
+class AuthException implements Exception {
+  final String message;
+  AuthException(this.message);
+}
+
+class ApiException implements Exception {
+  final String message;
+  final int statusCode;
+  ApiException(this.message, this.statusCode);
+}
 
 class UserService {
   final storage = const FlutterSecureStorage();
@@ -34,7 +51,6 @@ class UserService {
         throw Exception('Falha ao carregar usuários (${response.statusCode})');
       }
     } catch (e) {
-      print('Erro ao buscar usuários: $e');
       throw Exception('Erro de conexão ao buscar usuários');
     }
   }
@@ -53,17 +69,32 @@ class UserService {
           'Accept': 'application/json',
           'x-session-token': token,
         },
-      );
+      ).timeout(const Duration(seconds: 10), onTimeout: () {
+        throw TimeoutException('Tempo limite de conexão excedido. Tente novamente mais tarde.');
+      });
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         return User.fromJson(data);
+      } else if (response.statusCode == 404) {
+        throw NotFoundException('Usuário "@$login" não encontrado');
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        throw AuthException('Sessão expirada ou inválida');
       } else {
-        throw Exception('Usuário não encontrado (${response.statusCode})');
+        throw ApiException('Erro ao buscar usuário', response.statusCode);
       }
+    } on TimeoutException catch (e) {
+      throw TimeoutException(e.message ?? 'Tempo de conexão esgotado');
+    } on NotFoundException catch (e) {
+      throw e;
+    } on AuthException catch (e) {
+      throw e;
+    } on ApiException catch (e) {
+      throw e;
+    } on FormatException {
+      throw FormatException('Erro no formato dos dados recebidos do servidor');
     } catch (e) {
-      print('Erro ao buscar usuário: $e');
-      throw Exception('Erro de conexão ao buscar usuário');
+      throw Exception('Erro de conexão ao buscar usuário: ${e.toString()}');
     }
   }
 
@@ -91,7 +122,6 @@ class UserService {
         throw Exception('Falha ao listar seguidores (${response.statusCode})');
       }
     } catch (e) {
-      print('Erro ao buscar seguidores: $e');
       throw Exception('Erro de conexão ao buscar seguidores');
     }
   }
@@ -116,7 +146,6 @@ class UserService {
         throw Exception('Falha ao seguir o usuário (${response.statusCode})');
       }
     } catch (e) {
-      print('Erro ao seguir o usuário: $e');
       throw Exception('Erro de conexão ao seguir o usuário');
     }
   }
@@ -141,37 +170,7 @@ class UserService {
         throw Exception('Falha ao deixar de seguir o usuário (${response.statusCode})');
       }
     } catch (e) {
-      print('Erro ao deixar de seguir o usuário: $e');
       throw Exception('Erro de conexão ao deixar de seguir o usuário');
-    }
-  }
-
-  Future<void> updateUser(String login, String name, String email) async {
-    final token = await AuthService().getTokenUser();
-    if (token == null) throw Exception('Usuário não autenticado');
-
-    final uri = Uri.parse('${AppRoutes.initial}${AppRoutes.user(login)}');
-
-    try {
-      final response = await http.put(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'x-session-token': token,
-        },
-        body: json.encode({
-          'name': name,
-          'email': email,
-        }),
-      );
-
-      if (response.statusCode != 200) {
-        throw Exception('Falha ao atualizar usuário (${response.statusCode})');
-      }
-    } catch (e) {
-      print('Erro ao atualizar usuário: $e');
-      throw Exception('Erro de conexão ao atualizar usuário');
     }
   }
 
@@ -208,7 +207,6 @@ class UserService {
         return {'success': false, 'message': errorData['message'] ?? 'Erro ao atualizar usuário.'};
       }
     } catch (error) {
-      print('Erro ao editar usuário: $error');
       return {'success': false, 'message': 'Erro de conexão. Verifique sua internet.'};
     }
   }
@@ -236,7 +234,6 @@ class UserService {
         throw Exception('Falha ao excluir usuário (${response.statusCode})');
       }
     } catch (e) {
-      print('Erro ao excluir usuário: $e');
       throw Exception('Erro de conexão ao excluir usuário');
     }
   }

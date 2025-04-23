@@ -40,7 +40,6 @@ class SignUpScreenState extends State<SignUpScreen> {
       });
 
       if (result['success']) {
-        // Mostrar mensagem de sucesso
         if (!mounted) return;
         
         ScaffoldMessenger.of(context).showSnackBar( 
@@ -50,17 +49,14 @@ class SignUpScreenState extends State<SignUpScreen> {
           ),
         );
 
-        // Espera um tempo antes de redirecionar
         await Future.delayed(const Duration(seconds: 1));
         
-        // Verificar novamente se ainda está montado após o delay
         if (!mounted) return;
         
         // Navegar para tela inicial
         Navigator.pushNamed(context, AppRoutes.login);
       } else {
         if (!mounted) return;
-        // Mostrar mensagem de erro
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(result['message'])),
         );

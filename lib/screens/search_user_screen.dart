@@ -86,9 +86,18 @@ class SearchUserScreenState extends State<SearchUserScreen> {
         );
       }
       debugPrint('Erro ao buscar usuários: $e');
+      setState(() => _hasMore = false); 
     } finally {
-      setState(() => _isLoading = false);
+      setState(() => _isLoading = false); 
     }
+  }
+
+  void _retrySearch() {
+    setState(() {
+      _hasMore = true;
+      _currentPage = 0;
+    });
+    _searchUsers();
   }
 
   Future<void> _loadCurrentUser() async {
@@ -145,9 +154,22 @@ class SearchUserScreenState extends State<SearchUserScreen> {
             ),
           ),
           Expanded(
-            child: _searchResults.isEmpty && !_isLoading
-                ? const Center(child: Text('Nenhum usuário encontrado'))
-                : ListView.builder(
+            child: _isLoading && _searchResults.isEmpty
+                ? const Center(child: CircularProgressIndicator())
+                : _searchResults.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Text('Nenhum usuário encontrado'),
+                            TextButton(
+                              onPressed: _retrySearch,
+                              child: const Text('Tentar novamente'),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.builder(
                     controller: _scrollController,
                     itemCount: _searchResults.length + (_hasMore ? 1 : 0),
                     itemBuilder: (context, index) {

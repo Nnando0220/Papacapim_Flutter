@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:social_app/models/user.dart';
-import 'package:social_app/services/auth_service.dart';
-import 'package:social_app/services/user_service.dart';
+import 'package:social_app/services/auth_service.dart' as auth;
+import 'package:social_app/services/user_service.dart' as user_service;
 import '../models/post.dart';
 import '../routes/app_routes.dart';
 import '../widgets/bottom_navigation.dart';
-import '../services/post_service.dart';
+import '../services/post_service.dart' as post;
 import '../widgets/post_card.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -19,9 +19,9 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  final PostService _postService = PostService();
-  final UserService _userService = UserService();
-  final AuthService _authService = AuthService();
+  final post.PostService _postService = post.PostService();
+  final user_service.UserService _userService = user_service.UserService();
+  final auth.AuthService _authService = auth.AuthService();
 
   final ScrollController _scrollController = ScrollController();
   final List<Post> _posts = [];
@@ -36,6 +36,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late List<String> _followers = [];
   int _followersCount = 0;
 
+  bool _needsRefresh = false;
+  DateTime _lastRefreshTime = DateTime.now();
+
   @override
   void initState() {
     super.initState();
@@ -43,22 +46,83 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _initializeData();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final now = DateTime.now();
+      final timeSinceLastRefresh = now.difference(_lastRefreshTime).inSeconds;
+      
+      if (mounted && 
+          (ModalRoute.of(context)?.isCurrent == true) && 
+          _needsRefresh && 
+          timeSinceLastRefresh > 5) {
+        _refreshProfile();
+        _needsRefresh = false;
+        _lastRefreshTime = now;
+      }
+    });
+  }
+
   Future<void> _initializeData() async {
     try {
-      final fetchedUser = await _userService.fetchUser(widget.login);
-      final fetchedCurrentUser = await _authService.loadCurrentUser();
+      setState(() => _isLoading = true);
+      
+      final results = await Future.wait([
+        _userService.fetchUser(widget.login),
+        _authService.loadCurrentUser(),
+      ]);
 
       if (!mounted) return;
+      
       setState(() {
-        user = fetchedUser;
-        currentUser = fetchedCurrentUser;
+        user = results[0];
+        currentUser = results[1];
+        _isLoading = false;
       });
 
       await _checkIfFollowing();
       await _loadMorePosts();
+    } on user_service.NotFoundException catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _hasMore = false;
+        });
+        _showError(e.message);
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) Navigator.pop(context);
+        });
+      }
     } catch (e) {
-      if (mounted) _showError('Erro ao carregar dados do perfil');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _hasMore = false;
+        });
+        
+        if (e is user_service.NotFoundException) {
+        } else if (e is Exception && e.toString().contains('autenticação')) {
+          _showError(e.toString());
+          _navigateToLogin();
+        } else {
+          _showError('Erro ao carregar dados do perfil: ${e.toString()}');
+        }
+      }
     }
+  }
+
+  void _navigateToLogin() {
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        Navigator.pushNamedAndRemoveUntil(
+          context, 
+          AppRoutes.login, 
+          (route) => false
+        );
+      }
+    });
   }
 
   Future<void> _checkIfFollowing() async {
@@ -106,10 +170,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _posts.addAll(newPosts);
           _currentPage++;
         }
-        _isLoading = false;
       });
     } catch (e) {
       if (mounted) _showError('Erro ao carregar publicações');
+      setState(() => _hasMore = false); 
+    } finally {
+      if (mounted) setState(() => _isLoading = false); 
     }
   }
 
@@ -121,6 +187,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
     await _checkIfFollowing();
     await _loadMorePosts();
+    _lastRefreshTime = DateTime.now();
   }
 
   Future<void> _toggleFollow() async {
@@ -193,7 +260,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     if (user == null || currentUser == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(widget.login),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _isLoading 
+                  ? const CircularProgressIndicator()
+                  : const Icon(Icons.error_outline, size: 50, color: Colors.red),
+              const SizedBox(height: 20),
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  _isLoading 
+                      ? 'Carregando perfil...' 
+                      : 'Não foi possível carregar o perfil',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 16),
+                ),
+              ),
+              if (!_isLoading)
+                ElevatedButton(
+                  onPressed: _initializeData,
+                  child: const Text('Tentar novamente'),
+                ),
+            ],
+          ),
+        ),
+      );
     }
 
     final isCurrentUser = user!.login == currentUser!.login;
@@ -229,34 +330,125 @@ class _ProfileScreenState extends State<ProfileScreen> {
           controller: _scrollController,
           slivers: [
             SliverToBoxAdapter(
-              child: Column(
-                children: [
-                  const SizedBox(height: 16),
-                  CircleAvatar(
-                    radius: 40,
-                    child: Text(user!.login[0].toUpperCase(), style: const TextStyle(fontSize: 24)),
-                  ),
-                  const SizedBox(height: 10),
-                  Text('@${user!.login}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
-                  if (!isCurrentUser)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: ElevatedButton(
-                        onPressed: _toggleFollow,
-                        child: Text(_isFollowing ? 'Deixar de seguir' : 'Seguir'),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 20),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Hero(
+                          tag: 'profile-${user!.login}',
+                          child: CircleAvatar(
+                            radius: 45,
+                            backgroundColor: Theme.of(context).colorScheme.secondary,
+                            child: Text(
+                              user!.login[0].toUpperCase(), 
+                              style: const TextStyle(fontSize: 30, color: Colors.white)
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 20),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (user!.name.isNotEmpty)
+                                Text(
+                                  user!.name,
+                                  style: const TextStyle(
+                                    fontSize: 22, 
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              Text(
+                                '@${user!.login}',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  _buildStat('Seguidores', _followersCount),
+                                ],
+                              ),
+                              
+                              // Adicionando informação de quando o perfil foi criado
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8.0),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.calendar_today_outlined, 
+                                      size: 14,
+                                      color: Colors.grey[600],
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'Membro desde ${_formatTimestamp(user!.timestamp)}',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: Colors.grey[600],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    
+                    if (!isCurrentUser)
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: _toggleFollow,
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            backgroundColor: _isFollowing 
+                                ? Colors.grey[300] 
+                                : Theme.of(context).colorScheme.primary,
+                          ),
+                          child: Text(
+                            _isFollowing ? 'Deixar de seguir' : 'Seguir',
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: _isFollowing 
+                                  ? Colors.black87 
+                                  : Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    
+                    const SizedBox(height: 20),
+                    const Divider(thickness: 1),
+                    const SizedBox(height: 8),
+                    
+                    const Text(
+                      'Publicações',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      _buildStat('Seguidores', _followersCount),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                ],
+                    const SizedBox(height: 8),
+                  ],
+                ),
               ),
             ),
+            
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               sliver: SliverList(
@@ -312,10 +504,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _handleDelete(Post post) {
-    setState(() {
-      _posts.remove(post);
-    });
+  void _handleDelete(Post post) async {
+    if (currentUser!.login != post.login) {
+      _showError('Você não pode excluir este post');
+      return;
+    }
+
+    try {
+      setState(() {
+        _posts.removeWhere((p) => p.id == post.id);
+      });
+      
+      await _postService.deletePost(post.id);
+      _showSuccess('Post excluído com sucesso!');
+      _refreshProfile();
+    } catch (e) {
+      _showError('Erro ao excluir post: $e');
+      _needsRefresh = true;
+    }
   }
 
   void _handleLike(Post post) async {
@@ -366,17 +572,45 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  void _showSuccess(String message) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.green),
+    );
+  }
+
   Widget _buildStat(String label, int value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.only(right: 16),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('$value', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 4),
-          Text(label),
+          Text(
+            '$value', 
+            style: const TextStyle(
+              fontWeight: FontWeight.bold, 
+              fontSize: 18
+            )
+          ),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[700],
+            ),
+          ),
         ],
       ),
     );
+  }
+
+  String _formatTimestamp(DateTime timestamp) {
+    final months = [
+      'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+      'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'
+    ];
+    
+    return '${timestamp.day} de ${months[timestamp.month - 1]} de ${timestamp.year}';
   }
 
   @override

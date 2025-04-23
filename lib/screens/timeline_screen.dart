@@ -31,10 +31,32 @@ class _TimelineScreenState extends State<TimelineScreen> {
   String _lastSearchQuery = '';
   Timer? _debounce;
 
+  bool _needsRefresh = false;
+  DateTime _lastRefreshTime = DateTime.now();
+
   @override
   void initState() {
     super.initState();
     _initialize();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final now = DateTime.now();
+      final timeSinceLastRefresh = now.difference(_lastRefreshTime).inSeconds;
+      
+      if (mounted && 
+          (ModalRoute.of(context)?.isCurrent == true) && 
+          _needsRefresh && 
+          timeSinceLastRefresh > 5) {
+        _refresh();
+        _needsRefresh = false;
+        _lastRefreshTime = now;
+      }
+    });
   }
 
   Future<void> _initialize() async {
@@ -78,6 +100,7 @@ class _TimelineScreenState extends State<TimelineScreen> {
       });
     } catch (e) {
       _showError('Erro ao carregar posts');
+      setState(() => _hasMore = false); 
     } finally {
       setState(() => _isLoading = false);
     }
@@ -130,6 +153,7 @@ class _TimelineScreenState extends State<TimelineScreen> {
       _hasMore = true;
     });
     await _loadMorePosts();
+    _lastRefreshTime = DateTime.now();
   }
 
   void _handleDelete(Post post) {
@@ -139,17 +163,21 @@ class _TimelineScreenState extends State<TimelineScreen> {
     }
 
     try {
+      setState(() {
+        _posts.removeWhere((p) => p.id == post.id);
+        _filteredPosts.removeWhere((p) => p.id == post.id);
+      });
+      
       _postService.deletePost(post.id).then((_) {
         _showSuccess('Post excluído com sucesso!');
-        setState(() {
-          _posts.removeWhere((p) => p.id == post.id);
-          _filteredPosts.removeWhere((p) => p.id == post.id);
-        });
+        _refresh();
       }).catchError((error) {
         _showError('Erro ao excluir post: $error');
+        _needsRefresh = true; 
       });
     } catch (e) {
       _showError('Erro ao excluir post: $e');
+      _needsRefresh = true; 
     }
   }
 

@@ -59,22 +59,26 @@ class CreatePostScreenState extends State<CreatePostScreen> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            // Área de texto
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: TextField(
-                controller: _contentController,
-                maxLines: null,
-                decoration: const InputDecoration(
-                  hintText: 'No que você está pensando?',
-                  border: InputBorder.none,
+      body: Form(
+        child: SingleChildScrollView(
+          child: Column(
+            children: [
+              // Área de texto
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: TextField(
+                  controller: _contentController,
+                  maxLines: null,
+                  maxLength: 280,
+                  decoration: const InputDecoration(
+                    hintText: 'No que você está pensando?',
+                    border: InputBorder.none,
+                    counterText: '',
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -84,6 +88,11 @@ class CreatePostScreenState extends State<CreatePostScreen> {
     final message = _contentController.text.trim();
     if (message.isEmpty) {
       _showError('O conteúdo não pode estar vazio!');
+      return;
+    }
+    
+    if (message.length > 280) {
+      _showError('A mensagem não pode ter mais que 280 caracteres!');
       return;
     }
 

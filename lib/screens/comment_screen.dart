@@ -25,12 +25,33 @@ class _CommentsScreenState extends State<CommentsScreen> {
   bool _isLoading = false;
   bool _hasMore = true;
   bool _isInitialLoading = true;
+  bool _needsRefresh = false;
+  DateTime _lastRefreshTime = DateTime.now();
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
     _loadMoreComments();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final now = DateTime.now();
+      final timeSinceLastRefresh = now.difference(_lastRefreshTime).inSeconds;
+      
+      if (mounted && 
+          (ModalRoute.of(context)?.isCurrent == true) && 
+          _needsRefresh && 
+          timeSinceLastRefresh > 5) {
+        _refreshComments();
+        _needsRefresh = false;
+        _lastRefreshTime = now;
+      }
+    });
   }
 
   void _onScroll() {
@@ -53,18 +74,32 @@ class _CommentsScreenState extends State<CommentsScreen> {
         if (newComments.isEmpty) {
           _hasMore = false;
         } else {
+          final previousSize = _comments.length;
           _comments.addAll(newComments);
           _currentPage++;
+          
+          if (_comments.length == previousSize) {
+            _hasMore = false;
+          }
         }
       });
     } catch (e) {
       _showError('Erro ao carregar comentários: $e');
+      setState(() => _hasMore = false); 
     } finally {
       setState(() {
         _isLoading = false;
-        _isInitialLoading = false;
+        _isInitialLoading = false; 
       });
     }
+  }
+
+  void _retryLoading() {
+    setState(() {
+      _hasMore = true;
+      _isLoading = false;
+    });
+    _loadMoreComments();
   }
 
   Future<void> _refreshComments() async {
@@ -75,20 +110,43 @@ class _CommentsScreenState extends State<CommentsScreen> {
       _isInitialLoading = true;
     });
     await _loadMoreComments();
+    _lastRefreshTime = DateTime.now();
   }
 
   Future<void> _postComment() async {
     final content = _commentController.text.trim();
-    if (content.isEmpty) return;
+    if (content.isEmpty) {
+      _showError('O comentário não pode estar vazio');
+      return;
+    }
 
     try {
-      final newComment = await _postService.createComment(widget.post.id, content);
+      final tempComment = Comment(
+        id: -1,
+        postId: widget.post.id,
+        username: 'Enviando...', 
+        content: content,
+        timestamp: DateTime.now(),
+      );
+      
       setState(() {
-        _comments.insert(0, newComment);
+        _comments.insert(0, tempComment);
         _commentController.clear();
+      });
+
+      final newComment = await _postService.createComment(widget.post.id, content);
+      
+      setState(() {
+        final index = _comments.indexOf(tempComment);
+        if (index != -1) {
+          _comments[index] = newComment;
+        } else {
+          _comments.insert(0, newComment);
+        }
       });
     } catch (e) {
       _showError('Erro ao postar comentário: $e');
+      _needsRefresh = true;
     }
   }
 
@@ -117,19 +175,29 @@ class _CommentsScreenState extends State<CommentsScreen> {
               child: _isInitialLoading
                   ? const Center(child: CircularProgressIndicator())
                   : _comments.isEmpty
-                      ? const Center(
+                      ? Center(
                           child: Padding(
-                            padding: EdgeInsets.all(24),
-                            child: Text(
-                              'Nenhum comentário ainda. Seja o primeiro!',
-                              style: TextStyle(fontSize: 16, color: Colors.grey),
-                              textAlign: TextAlign.center,
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Text(
+                                  'Nenhum comentário ainda. Seja o primeiro!',
+                                  style: TextStyle(fontSize: 16, color: Colors.grey),
+                                  textAlign: TextAlign.center,
+                                ),
+                                if (!_hasMore) 
+                                  TextButton(
+                                    onPressed: _retryLoading,
+                                    child: const Text('Tentar novamente'),
+                                  ),
+                              ],
                             ),
                           ),
                         )
                       : ListView.builder(
                           controller: _scrollController,
-                          itemCount: _comments.length + (_hasMore ? 1 : 0),
+                          itemCount: _comments.length + (_hasMore && _isLoading ? 1 : 0),
                           itemBuilder: (context, index) {
                             if (index < _comments.length) {
                               return _buildCommentItem(_comments[index]);
@@ -152,17 +220,54 @@ class _CommentsScreenState extends State<CommentsScreen> {
   Widget _buildOriginalPost() {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Colors.grey, width: 0.5)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: const Border(bottom: BorderSide(color: Colors.grey, width: 0.5)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 1,
+            blurRadius: 3,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(widget.post.login, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 4),
-          Text(_formatTimestamp(widget.post.timestamp), style: const TextStyle(color: Colors.grey, fontSize: 12)),
+          Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: Theme.of(context).primaryColor,
+                child: Text(
+                  widget.post.login[0].toUpperCase(),
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.post.login,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                    Text(
+                      _formatTimestamp(widget.post.timestamp),
+                      style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 12),
-          Text(widget.post.message, style: const TextStyle(fontSize: 16)),
+          Text(
+            widget.post.message,
+            style: const TextStyle(fontSize: 16),
+          ),
+          const SizedBox(height: 8),
         ],
       ),
     );

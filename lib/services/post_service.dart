@@ -3,10 +3,25 @@ import 'package:social_app/models/comment.dart';
 import 'dart:convert';
 import 'package:social_app/routes/app_routes.dart';
 import 'package:social_app/services/auth_service.dart';
-import '../models/post.dart'; // Importe seu modelo Post
+import '../models/post.dart'; 
+
+class TimeoutException implements Exception {
+  final String? message;
+  TimeoutException(this.message);
+}
+
+class ApiException implements Exception {
+  final String message;
+  final int statusCode;
+  ApiException(this.message, this.statusCode);
+}
+
+class AuthException implements Exception {
+  final String message;
+  AuthException(this.message);
+}
 
 class PostService {
-  // Método para buscar posts paginados
   Future<List<Post>> fetchPosts({required int page}) async {
     final url = Uri.parse('${AppRoutes.initial}${AppRoutes.timeline}?page=$page');
 
@@ -19,16 +34,16 @@ class PostService {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'x-session-token': token, // Inclui o token no header
+          'x-session-token': token,
         },
-      );
+      ).timeout(const Duration(seconds: 10), onTimeout: () {
+        throw TimeoutException('Tempo limite de conexão excedido. Tente novamente mais tarde.');
+      });
 
       if (response.statusCode == 200) {
-        // Decodifica a resposta JSON (espera-se uma lista de posts)
         final List<dynamic> responseData = json.decode(response.body);
-        // Mapeia a lista de JSON para uma lista de objetos Post
         List<Post> posts = responseData
-            .map((postJson) => Post.fromJson(postJson)) // Usa o factory constructor
+            .map((postJson) => Post.fromJson(postJson)) 
             .toList();
 
         for (var post in posts) {
@@ -37,20 +52,21 @@ class PostService {
         }
         return posts;
       } else if (response.statusCode == 401 || response.statusCode == 403) {
-         // Erro de autenticação/autorização
-         print('Erro de autenticação ao buscar posts: ${response.statusCode}');
-         // Você pode tentar fazer logout aqui ou lançar um erro específico
-         throw Exception('Sessão expirada ou inválida');
+         throw AuthException('Sessão expirada ou inválida. Por favor, faça login novamente.');
       }
       else {
-        // Outros erros do servidor
-        print('Erro ao buscar posts: ${response.statusCode} - ${response.body}');
-        throw Exception('Falha ao carregar posts (${response.statusCode})');
+        throw ApiException('Falha ao carregar posts', response.statusCode);
       }
+    } on TimeoutException catch (e) {
+      throw TimeoutException(e.message ?? 'Tempo de conexão esgotado');
+    } on AuthException catch (e) {
+      throw e;
+    } on ApiException catch (e) {
+      throw e;
+    } on FormatException {
+      throw FormatException('Erro no formato dos dados recebidos do servidor');
     } catch (error) {
-      // Erros de rede ou outros erros
-      print('Erro de conexão/inesperado ao buscar posts: $error');
-      throw Exception('Erro de conexão ao buscar posts.');
+      throw Exception('Erro de conexão ao buscar posts: ${error.toString()}');
     }
   }
 
@@ -72,10 +88,8 @@ class PostService {
       final likesData = json.decode(response.body);
       return likesData.isEmpty ? 0 : likesData.length;
     } else if (response.statusCode == 401 || response.statusCode == 403) {
-      print('Erro de autenticação ao buscar likes: ${response.statusCode}');
       throw Exception('Sessão expirada ou inválida');
     } else {
-      print('Erro ao buscar likes: ${response.statusCode} - ${response.body}');
       return 0;
     }
   }
@@ -99,10 +113,8 @@ class PostService {
 
       return commentsData.isEmpty ? 0 : commentsData.length;
     } else if (response.statusCode == 401 || response.statusCode == 403) {
-      print('Erro de autenticação ao buscar likes: ${response.statusCode}');
       throw Exception('Sessão expirada ou inválida');
     } else {
-      print('Erro ao buscar likes: ${response.statusCode} - ${response.body}');
       return 0;
     }
   }
@@ -119,21 +131,19 @@ class PostService {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'x-session-token': token, // Inclui o token no header
+          'x-session-token': token, 
         },
       );
 
       if (response.statusCode == 200) {
         final List<dynamic> responseData = json.decode(response.body);
 
-        // Se a lista estiver vazia, retorna imediatamente
         if (responseData.isEmpty) return [];
 
         List<Post> posts = responseData
             .map((postJson) => Post.fromJson(postJson))
             .toList();
 
-        // Só busca likes e comentários se houver posts
         for (var post in posts) {
           post.likes = await fetchLikesForPost(post.id);
           post.comments = await fetchComentsForPost(post.id);
@@ -141,14 +151,11 @@ class PostService {
 
         return posts;
       } else if (response.statusCode == 401 || response.statusCode == 403) {
-        print('Erro de autenticação ao buscar posts: ${response.statusCode}');
         throw Exception('Sessão expirada ou inválida');
       } else {
-        print('Erro ao buscar posts: ${response.statusCode} - ${response.body}');
         throw Exception('Falha ao carregar posts (${response.statusCode})');
       }
     } catch (error) {
-      print('Erro de conexão/inesperado ao buscar posts: $error');
       throw Exception('Erro de conexão ao buscar posts.');
     }
   }
@@ -165,16 +172,14 @@ class PostService {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'x-session-token': token, // Inclui o token no header
+          'x-session-token': token, 
         },
       );
 
       if (response.statusCode == 200) {
-        // Decodifica a resposta JSON (espera-se uma lista de posts)
         final List<dynamic> responseData = json.decode(response.body);
-        // Mapeia a lista de JSON para uma lista de objetos Post
         List<Post> posts = responseData
-            .map((postJson) => Post.fromJson(postJson)) // Usa o factory constructor
+            .map((postJson) => Post.fromJson(postJson)) 
             .toList();
 
         for (var post in posts) {
@@ -183,19 +188,12 @@ class PostService {
         }
         return posts;
       } else if (response.statusCode == 401 || response.statusCode == 403) {
-         // Erro de autenticação/autorização
-         print('Erro de autenticação ao buscar posts: ${response.statusCode}');
-         // Você pode tentar fazer logout aqui ou lançar um erro específico
          throw Exception('Sessão expirada ou inválida');
       }
       else {
-        // Outros erros do servidor
-        print('Erro ao buscar posts: ${response.statusCode} - ${response.body}');
         throw Exception('Falha ao carregar posts (${response.statusCode})');
       }
     } catch (error) {
-      // Erros de rede ou outros erros
-      print('Erro de conexão/inesperado ao buscar posts: $error');
       throw Exception('Erro de conexão ao buscar posts.');
     }
   }
@@ -212,25 +210,22 @@ class PostService {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'x-session-token': token, // Inclui o token no header
+          'x-session-token': token, 
         },
       );
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
-        print('Número de posts: ${data.length}');
         return data.length;
       } else {
         throw Exception('Erro ao contar posts (${response.statusCode})');
       }
     } catch (error) {
-      print('Erro de conexão ao contar posts: $error');
       throw Exception('Erro de conexão ao contar posts.');
     }
   }
 
   Future<void> likePost(int postId) async {
-    print(postId);
     final uri = Uri.parse('${AppRoutes.initial}${AppRoutes.like(postId)}');
 
     final token = await AuthService().getTokenUser();
@@ -242,7 +237,7 @@ class PostService {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'x-session-token': token, // Inclui o token no header
+          'x-session-token': token, 
         },
       );
 
@@ -250,7 +245,6 @@ class PostService {
         throw Exception('Falha ao curtir a postagem');
       }
     } catch (error) {
-      print('Erro de conexão ao curtir a postagem: $error');
       throw Exception('Erro de conexão ao curtir a postagem.');
     }
   }
@@ -267,7 +261,7 @@ class PostService {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'x-session-token': token, // Inclui o token no header
+          'x-session-token': token, 
         },
       );
 
@@ -275,7 +269,6 @@ class PostService {
         throw Exception('Falha ao descurtir a postagem');
       }
     } catch (error) {
-      print('Erro de conexão ao descurtir a postagem: $error');
       throw Exception('Erro de conexão ao descurtir a postagem.');
     }
   }
@@ -292,7 +285,7 @@ class PostService {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'x-session-token': token, // Inclui o token no header
+          'x-session-token': token, 
         },
       );
 
@@ -302,7 +295,6 @@ class PostService {
         throw Exception('Erro ao carregar curtidas');
       }
     } catch (error) {
-      print('Erro de conexão ao carregar curtidas: $error');
       throw Exception('Erro de conexão ao carregar curtidas.');
     }
   }
@@ -332,7 +324,6 @@ class PostService {
         throw Exception('Erro ao criar post (${response.statusCode})');
       }
     } catch (error) {
-      print('Erro de conexão ao criar post: $error');
       throw Exception('Erro de conexão ao criar post.');
     }
   }
@@ -357,7 +348,6 @@ class PostService {
         throw Exception('Erro ao deletar post (${response.statusCode})');
       }
     } catch (error) {
-      print('Erro de conexão ao deletar post: $error');
       throw Exception('Erro de conexão ao deletar post.');
     }
   }
@@ -385,7 +375,6 @@ class PostService {
         throw Exception('Erro ao carregar comentários (${response.statusCode})');
       }
     } catch (error) {
-      print('Erro de conexão ao carregar comentários: $error');
       throw Exception('Erro de conexão ao carregar comentários.');
     }
   }
@@ -415,13 +404,11 @@ class PostService {
         final jsonData = json.decode(response.body);
         return Comment.fromJson(jsonData);
       } else if (response.statusCode == 401 || response.statusCode == 403) {
-        print('Erro de autenticação ao criar comentário: ${response.statusCode}');
         throw Exception('Sessão expirada ou inválida');
       } else {
         throw Exception('Erro ao criar comentário (${response.statusCode})');
       }
     } catch (error) {
-      print('Erro de conexão ao criar comentário: $error');
       throw Exception('Erro de conexão ao criar comentário.');
     }
   }

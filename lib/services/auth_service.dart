@@ -1,5 +1,6 @@
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:social_app/models/user.dart';
 import 'package:social_app/routes/app_routes.dart';
@@ -19,7 +20,9 @@ class AuthService {
           'login': login,
           'password': password,
         }),
-      );
+      ).timeout(const Duration(seconds: 10), onTimeout: () {
+        throw TimeoutException('Tempo limite de conexão excedido. Verifique sua internet.');
+      });
 
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
@@ -41,17 +44,26 @@ class AuthService {
           'message': responseData['message'] ?? 'Login realizado com sucesso!',
           'user': userDataToStore,
         };
+      } else if (response.statusCode == 401) {
+        return {
+          'success': false,
+          'message': 'Credenciais inválidas. Verifique seu login e senha.',
+        };
       } else {
         final errorData = json.decode(response.body);
         return {
           'success': false,
-          'message': errorData['message'] ?? 'Erro no login',
+          'message': errorData['message'] ?? 'Erro no login. Código: ${response.statusCode}',
         };
       }
+    } on TimeoutException catch (e) {
+      return {'success': false, 'message': e.message ?? 'Tempo de conexão esgotado'};
+    } on FormatException {
+      return {'success': false, 'message': 'Erro no formato dos dados recebidos do servidor'};
     } catch (error) {
       return {
         'success': false,
-        'message': 'Erro de conexão. Verifique sua internet.',
+        'message': 'Erro de conexão. Verifique sua internet: ${error.toString()}',
       };
     }
   }
@@ -100,10 +112,17 @@ class AuthService {
   }
 
   Future<User> loadCurrentUser() async {
-    final userJson = await storage.read(key: 'user_data');
-    if (userJson != null) {
-      return User.fromJson(json.decode(userJson));
+    try {
+      final userJson = await storage.read(key: 'user_data');
+      if (userJson != null) {
+        return User.fromJson(json.decode(userJson));
+      }
+      throw Exception('Dados do usuário não encontrados. Efetue login novamente.');
+    } catch (e) {
+      if (e is FormatException) {
+        throw Exception('Erro no formato dos dados do usuário. Efetue login novamente.');
+      }
+      throw Exception('Erro ao carregar usuário: ${e.toString()}');
     }
-    throw Exception('No user data found');
   }
 }
